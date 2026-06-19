@@ -2,26 +2,31 @@
   {
     "attr": "dtctl",
     "owner": "dynatrace-oss",
-    "repo": "dtctl"
+    "repo": "dtctl",
+    "versionCommand": "dtctl version"
   },
   {
     "attr": "github-copilot",
     "owner": "github",
-    "repo": "app"
+    "repo": "app",
+    "versionCommand": null
   },
   {
     "attr": "open-ecc",
     "owner": "mbwilding",
-    "repo": "open-ecc"
+    "repo": "open-ecc",
+    "versionCommand": "ecc --version"
   },
   {
     "attr": "power-platform-toolbox",
     "owner": "PowerPlatformToolBox",
-    "repo": "desktop-app"
+    "repo": "desktop-app",
+    "versionCommand": null
   },
   {
     "attr": "steam-achievement-manager",
     "owner": "mbwilding",
-    "repo": "steam-achievement-manager"
+    "repo": "steam-achievement-manager",
+    "versionCommand": "sam --version"
   }
 ]

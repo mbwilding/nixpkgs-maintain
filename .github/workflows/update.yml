@@ -67,6 +67,24 @@ jobs:
             --commit \
             "${{ matrix.package.attr }}"
 
+      - name: Smoke test binary
+        if: steps.current.outputs.version != steps.release.outputs.version && matrix.package.versionCommand != null
+        working-directory: nixpkgs
+        run: |
+          nix-build --impure --expr "(import ./. {}).${{ matrix.package.attr }}"
+          OUTPUT=$(${{ matrix.package.versionCommand }} 2>&1) || true
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -F "${{ steps.release.outputs.version }}"
+
+      - name: Smoke test binary exists (GUI)
+        if: steps.current.outputs.version != steps.release.outputs.version && matrix.package.versionCommand == null
+        working-directory: nixpkgs
+        run: |
+          nix-build --impure --expr "(import ./. {}).${{ matrix.package.attr }}"
+          MAIN=$(nix eval --raw --impure \
+            --expr "(import ./. {}).${{ matrix.package.attr }}.meta.mainProgram")
+          test -x result/bin/"$MAIN" && echo "Binary result/bin/$MAIN exists and is executable."
+
       - name: Push branch
         if: steps.current.outputs.version != steps.release.outputs.version
         working-directory: nixpkgs
