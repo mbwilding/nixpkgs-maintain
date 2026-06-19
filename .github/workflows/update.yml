@@ -6,21 +6,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  load-packages:
-    runs-on: ubuntu-latest
-    outputs:
-      packages: ${{ steps.load.outputs.packages }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: load
-        run: echo "packages=$(jq -c . packages.json)" >> "$GITHUB_OUTPUT"
-
   check-packages:
     runs-on: ubuntu-latest
-    needs: load-packages
     outputs:
       matrix: ${{ steps.filter.outputs.matrix }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
 
@@ -34,7 +26,7 @@ jobs:
       - name: Filter to packages that exist in nixpkgs
         id: filter
         run: |
-          PACKAGES='${{ needs.load-packages.outputs.packages }}'
+          PACKAGES="$(jq -c . packages.json)"
           MATRIX="[]"
           for row in $(echo "$PACKAGES" | jq -c '.[]'); do
             ATTR=$(echo "$row" | jq -r '.attr')
