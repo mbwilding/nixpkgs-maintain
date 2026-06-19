@@ -6,13 +6,58 @@ on:
   workflow_dispatch:
 
 jobs:
+  load-packages:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.load.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: load
+        run: echo "packages=$(jq -c . packages.json)" >> "$GITHUB_OUTPUT"
+
+  check-packages:
+    runs-on: ubuntu-latest
+    needs: load-packages
+    outputs:
+      matrix: ${{ steps.filter.outputs.matrix }}
+    steps:
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Clone nixpkgs
+        uses: actions/checkout@v4
+        with:
+          repository: NixOS/nixpkgs
+          ref: master
+          path: nixpkgs
+
+      - name: Filter to packages that exist in nixpkgs
+        id: filter
+        run: |
+          PACKAGES='${{ needs.load-packages.outputs.packages }}'
+          MATRIX="[]"
+          for row in $(echo "$PACKAGES" | jq -c '.[]'); do
+            ATTR=$(echo "$row" | jq -r '.attr')
+            VERSION=$(nix eval --raw --impure \
+              --expr "(import ./nixpkgs {}).${ATTR}.version" 2>/dev/null || true)
+            if [ -n "$VERSION" ]; then
+              echo "${ATTR} found at ${VERSION}"
+              ENTRY=$(echo "$row" | jq -c --arg v "$VERSION" '. + {currentVersion: $v}')
+              MATRIX=$(echo "$MATRIX" | jq -c --argjson e "$ENTRY" '. + [$e]')
+            else
+              echo "${ATTR} not yet in nixpkgs, skipping."
+            fi
+          done
+          echo "matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
+
   update:
     runs-on: ubuntu-latest
+    needs: check-packages
+    if: needs.check-packages.outputs.matrix != '[]'
     strategy:
       fail-fast: false
       matrix:
-        package: ${{ fromJson(needs.load-packages.outputs.packages) }}
-    needs: load-packages
+        package: ${{ fromJson(needs.check-packages.outputs.matrix) }}
 
     steps:
       - name: Install Nix
@@ -32,7 +77,12 @@ jobs:
             -q '.[0].tagName' | sed 's/^v//')
           echo "version=${LATEST}" >> "$GITHUB_OUTPUT"
 
+      - name: Skip if already up to date
+        if: matrix.package.currentVersion == steps.release.outputs.version
+        run: echo "Already at ${{ matrix.package.currentVersion }}, skipping."
+
       - name: Clone nixpkgs
+        if: matrix.package.currentVersion != steps.release.outputs.version
         uses: actions/checkout@v4
         with:
           repository: NixOS/nixpkgs
@@ -40,27 +90,8 @@ jobs:
           path: nixpkgs
           token: ${{ secrets.NIXPKGS_TOKEN }}
 
-      - name: Get current nixpkgs version
-        id: current
-        run: |
-          CURRENT=$(nix eval --raw --impure \
-            --expr "(import ./nixpkgs {}).${{ matrix.package.attr }}.version" 2>/dev/null || true)
-          if [ -z "$CURRENT" ]; then
-            echo "Package ${{ matrix.package.attr }} not found in nixpkgs yet, skipping."
-          fi
-          echo "version=${CURRENT}" >> "$GITHUB_OUTPUT"
-
-      - name: Skip if already up to date
-        if: steps.current.outputs.version == steps.release.outputs.version || steps.current.outputs.version == ''
-        run: |
-          if [ -z "${{ steps.current.outputs.version }}" ]; then
-            echo "Package not yet in nixpkgs, skipping."
-          else
-            echo "Already at ${{ steps.current.outputs.version }}, skipping."
-          fi
-
       - name: Create update branch
-        if: steps.current.outputs.version != steps.release.outputs.version && steps.current.outputs.version != ''
+        if: matrix.package.currentVersion != steps.release.outputs.version
         working-directory: nixpkgs
         run: |
           git config user.name "github-actions[bot]"
@@ -68,7 +99,7 @@ jobs:
           git checkout -b "${{ matrix.package.attr }}-${{ steps.release.outputs.version }}"
 
       - name: Run nix-update
-        if: steps.current.outputs.version != steps.release.outputs.version && steps.current.outputs.version != ''
+        if: matrix.package.currentVersion != steps.release.outputs.version
         working-directory: nixpkgs
         run: |
           nix run nixpkgs#nix-update -- \
@@ -79,16 +110,16 @@ jobs:
             "${{ matrix.package.attr }}"
 
       - name: Smoke test binary
-        if: steps.current.outputs.version != steps.release.outputs.version && steps.current.outputs.version != '' && matrix.package.versionCommand != null
+        if: matrix.package.currentVersion != steps.release.outputs.version && matrix.package.versionCommand != null
         working-directory: nixpkgs
         run: |
           nix-build --impure --expr "(import ./. {}).${{ matrix.package.attr }}"
-          OUTPUT=$(${{ matrix.package.versionCommand }} 2>&1) || true
+          OUTPUT=$(result/bin/${{ matrix.package.versionCommand }} 2>&1) || true
           echo "$OUTPUT"
           echo "$OUTPUT" | grep -F "${{ steps.release.outputs.version }}"
 
       - name: Smoke test binary exists (GUI)
-        if: steps.current.outputs.version != steps.release.outputs.version && steps.current.outputs.version != '' && matrix.package.versionCommand == null
+        if: matrix.package.currentVersion != steps.release.outputs.version && matrix.package.versionCommand == null
         working-directory: nixpkgs
         run: |
           nix-build --impure --expr "(import ./. {}).${{ matrix.package.attr }}"
@@ -97,7 +128,7 @@ jobs:
           test -x result/bin/"$MAIN" && echo "Binary result/bin/$MAIN exists and is executable."
 
       - name: Push branch
-        if: steps.current.outputs.version != steps.release.outputs.version && steps.current.outputs.version != ''
+        if: matrix.package.currentVersion != steps.release.outputs.version
         working-directory: nixpkgs
         env:
           GH_TOKEN: ${{ secrets.NIXPKGS_TOKEN }}
@@ -106,7 +137,7 @@ jobs:
           git push fork HEAD
 
       - name: Open PR to NixOS/nixpkgs
-        if: steps.current.outputs.version != steps.release.outputs.version && steps.current.outputs.version != ''
+        if: matrix.package.currentVersion != steps.release.outputs.version
         env:
           GH_TOKEN: ${{ secrets.NIXPKGS_TOKEN }}
         run: |
@@ -114,7 +145,7 @@ jobs:
             --repo NixOS/nixpkgs \
             --head "mbwilding:${{ matrix.package.attr }}-${{ steps.release.outputs.version }}" \
             --base master \
-            --title "${{ matrix.package.attr }}: ${{ steps.current.outputs.version }} -> ${{ steps.release.outputs.version }}" \
+            --title "${{ matrix.package.attr }}: ${{ matrix.package.currentVersion }} -> ${{ steps.release.outputs.version }}" \
             --body "$(cat <<'EOF'
           Automated update via [nixpkgs-maintain](https://github.com/mbwilding/nixpkgs-maintain).
 
@@ -151,12 +182,3 @@ jobs:
           [pkgs/test]: https://github.com/NixOS/nixpkgs/blob/master/pkgs/test
           EOF
           )"
-
-  load-packages:
-    runs-on: ubuntu-latest
-    outputs:
-      packages: ${{ steps.load.outputs.packages }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: load
-        run: echo "packages=$(cat packages.json | jq -c .)" >> "$GITHUB_OUTPUT"
