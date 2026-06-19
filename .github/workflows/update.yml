@@ -26,9 +26,8 @@ jobs:
       - name: Filter to packages that exist in nixpkgs
         id: filter
         run: |
-          PACKAGES="$(jq -c . packages.json)"
           MATRIX="[]"
-          for row in $(echo "$PACKAGES" | jq -c '.[]'); do
+          while IFS= read -r row; do
             ATTR=$(echo "$row" | jq -r '.attr')
             VERSION=$(nix eval --raw --impure \
               --expr "(import ./nixpkgs {}).${ATTR}.version" 2>/dev/null || true)
@@ -39,7 +38,7 @@ jobs:
             else
               echo "${ATTR} not yet in nixpkgs, skipping."
             fi
-          done
+          done < <(jq -c '.[]' packages.json)
           echo "matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
 
   update:
