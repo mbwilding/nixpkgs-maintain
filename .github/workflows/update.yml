@@ -1,0 +1,134 @@
+name: Update nixpkgs packages
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJson(needs.load-packages.outputs.packages) }}
+    needs: load-packages
+
+    steps:
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Check latest upstream release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LATEST=$(gh release view \
+            --repo "${{ matrix.package.owner }}/${{ matrix.package.repo }}" \
+            --json tagName -q '.tagName' | sed 's/^v//')
+          echo "version=${LATEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Clone nixpkgs
+        uses: actions/checkout@v4
+        with:
+          repository: NixOS/nixpkgs
+          ref: master
+          path: nixpkgs
+          token: ${{ secrets.NIXPKGS_TOKEN }}
+
+      - name: Get current nixpkgs version
+        id: current
+        run: |
+          CURRENT=$(nix eval --raw --impure \
+            --expr "(import ./nixpkgs {}).${{ matrix.package.attr }}.version")
+          echo "version=${CURRENT}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if already up to date
+        if: steps.current.outputs.version == steps.release.outputs.version
+        run: |
+          echo "Already at ${{ steps.current.outputs.version }}, skipping."
+
+      - name: Create update branch
+        if: steps.current.outputs.version != steps.release.outputs.version
+        working-directory: nixpkgs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${{ matrix.package.attr }}-${{ steps.release.outputs.version }}"
+
+      - name: Run nix-update
+        if: steps.current.outputs.version != steps.release.outputs.version
+        working-directory: nixpkgs
+        run: |
+          nix run nixpkgs#nix-update -- \
+            --version "${{ steps.release.outputs.version }}" \
+            --build \
+            --test \
+            --format \
+            --commit \
+            "${{ matrix.package.attr }}"
+
+      - name: Push branch
+        if: steps.current.outputs.version != steps.release.outputs.version
+        working-directory: nixpkgs
+        env:
+          GH_TOKEN: ${{ secrets.NIXPKGS_TOKEN }}
+        run: |
+          git remote add fork "https://x-access-token:${{ secrets.NIXPKGS_TOKEN }}@github.com/mbwilding/nixpkgs.git"
+          git push fork HEAD
+
+      - name: Open PR to NixOS/nixpkgs
+        if: steps.current.outputs.version != steps.release.outputs.version
+        env:
+          GH_TOKEN: ${{ secrets.NIXPKGS_TOKEN }}
+        run: |
+          gh pr create \
+            --repo NixOS/nixpkgs \
+            --head "mbwilding:${{ matrix.package.attr }}-${{ steps.release.outputs.version }}" \
+            --base master \
+            --title "${{ matrix.package.attr }}: ${{ steps.current.outputs.version }} -> ${{ steps.release.outputs.version }}" \
+            --body "$(cat <<'EOF'
+          Automated update via [nixpkgs-maintain](https://github.com/mbwilding/nixpkgs-maintain).
+
+          ## Things done
+
+          - Built on platform:
+            - [x] x86_64-linux
+            - [ ] aarch64-linux
+            - [ ] x86_64-darwin
+            - [ ] aarch64-darwin
+          - Tested, as applicable:
+            - [ ] [NixOS tests] in [nixos/tests].
+            - [x] [Package tests] at \`passthru.tests\`.
+            - [ ] Tests in [lib/tests] or [pkgs/test] for functions and "core" functionality.
+          - [ ] Ran \`nixpkgs-review\` on this PR. See [nixpkgs-review usage].
+          - [x] Tested basic functionality of all binary files, usually in \`./result/bin/\`.
+          - Nixpkgs Release Notes
+            - [ ] Package update: when the change is major or breaking.
+          - NixOS Release Notes
+            - [ ] Module addition: when adding a new NixOS module.
+            - [ ] Module update: when the change is significant.
+          - [x] Fits [CONTRIBUTING.md], [pkgs/README.md], [maintainers/README.md] and other READMEs.
+          - [x] Follows the [automation/AI policy].
+
+          [NixOS tests]: https://nixos.org/manual/nixos/unstable/index.html#sec-nixos-tests
+          [Package tests]: https://github.com/NixOS/nixpkgs/blob/master/pkgs/README.md#package-tests
+          [nixpkgs-review usage]: https://github.com/Mic92/nixpkgs-review#usage
+          [CONTRIBUTING.md]: https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md
+          [automation/AI policy]: https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md#automationai-policy
+          [lib/tests]: https://github.com/NixOS/nixpkgs/blob/master/lib/tests
+          [maintainers/README.md]: https://github.com/NixOS/nixpkgs/blob/master/maintainers/README.md
+          [nixos/tests]: https://github.com/NixOS/nixpkgs/blob/master/nixos/tests
+          [pkgs/README.md]: https://github.com/NixOS/nixpkgs/blob/master/pkgs/README.md
+          [pkgs/test]: https://github.com/NixOS/nixpkgs/blob/master/pkgs/test
+          EOF
+          )"
+
+  load-packages:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.load.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: load
+        run: echo "packages=$(cat packages.json | jq -c .)" >> "$GITHUB_OUTPUT"
