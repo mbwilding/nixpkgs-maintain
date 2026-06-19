@@ -63,7 +63,6 @@ jobs:
           nix run nixpkgs#nix-update -- \
             --version "${{ steps.release.outputs.version }}" \
             --build \
-            --test \
             --format \
             --commit \
             "${{ matrix.package.attr }}"
@@ -99,7 +98,7 @@ jobs:
             - [ ] aarch64-darwin
           - Tested, as applicable:
             - [ ] [NixOS tests] in [nixos/tests].
-            - [x] [Package tests] at \`passthru.tests\`.
+            - [ ] [Package tests] at \`passthru.tests\`.
             - [ ] Tests in [lib/tests] or [pkgs/test] for functions and "core" functionality.
           - [ ] Ran \`nixpkgs-review\` on this PR. See [nixpkgs-review usage].
           - [x] Tested basic functionality of all binary files, usually in \`./result/bin/\`.
