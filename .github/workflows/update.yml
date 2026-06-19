@@ -44,16 +44,23 @@ jobs:
         id: current
         run: |
           CURRENT=$(nix eval --raw --impure \
-            --expr "(import ./nixpkgs {}).${{ matrix.package.attr }}.version")
+            --expr "(import ./nixpkgs {}).${{ matrix.package.attr }}.version" 2>/dev/null || true)
+          if [ -z "$CURRENT" ]; then
+            echo "Package ${{ matrix.package.attr }} not found in nixpkgs yet, skipping."
+          fi
           echo "version=${CURRENT}" >> "$GITHUB_OUTPUT"
 
       - name: Skip if already up to date
-        if: steps.current.outputs.version == steps.release.outputs.version
+        if: steps.current.outputs.version == steps.release.outputs.version || steps.current.outputs.version == ''
         run: |
-          echo "Already at ${{ steps.current.outputs.version }}, skipping."
+          if [ -z "${{ steps.current.outputs.version }}" ]; then
+            echo "Package not yet in nixpkgs, skipping."
+          else
+            echo "Already at ${{ steps.current.outputs.version }}, skipping."
+          fi
 
       - name: Create update branch
-        if: steps.current.outputs.version != steps.release.outputs.version
+        if: steps.current.outputs.version != steps.release.outputs.version && steps.current.outputs.version != ''
         working-directory: nixpkgs
         run: |
           git config user.name "github-actions[bot]"
@@ -61,7 +68,7 @@ jobs:
           git checkout -b "${{ matrix.package.attr }}-${{ steps.release.outputs.version }}"
 
       - name: Run nix-update
-        if: steps.current.outputs.version != steps.release.outputs.version
+        if: steps.current.outputs.version != steps.release.outputs.version && steps.current.outputs.version != ''
         working-directory: nixpkgs
         run: |
           nix run nixpkgs#nix-update -- \
@@ -72,7 +79,7 @@ jobs:
             "${{ matrix.package.attr }}"
 
       - name: Smoke test binary
-        if: steps.current.outputs.version != steps.release.outputs.version && matrix.package.versionCommand != null
+        if: steps.current.outputs.version != steps.release.outputs.version && steps.current.outputs.version != '' && matrix.package.versionCommand != null
         working-directory: nixpkgs
         run: |
           nix-build --impure --expr "(import ./. {}).${{ matrix.package.attr }}"
@@ -81,7 +88,7 @@ jobs:
           echo "$OUTPUT" | grep -F "${{ steps.release.outputs.version }}"
 
       - name: Smoke test binary exists (GUI)
-        if: steps.current.outputs.version != steps.release.outputs.version && matrix.package.versionCommand == null
+        if: steps.current.outputs.version != steps.release.outputs.version && steps.current.outputs.version != '' && matrix.package.versionCommand == null
         working-directory: nixpkgs
         run: |
           nix-build --impure --expr "(import ./. {}).${{ matrix.package.attr }}"
@@ -90,7 +97,7 @@ jobs:
           test -x result/bin/"$MAIN" && echo "Binary result/bin/$MAIN exists and is executable."
 
       - name: Push branch
-        if: steps.current.outputs.version != steps.release.outputs.version
+        if: steps.current.outputs.version != steps.release.outputs.version && steps.current.outputs.version != ''
         working-directory: nixpkgs
         env:
           GH_TOKEN: ${{ secrets.NIXPKGS_TOKEN }}
@@ -99,7 +106,7 @@ jobs:
           git push fork HEAD
 
       - name: Open PR to NixOS/nixpkgs
-        if: steps.current.outputs.version != steps.release.outputs.version
+        if: steps.current.outputs.version != steps.release.outputs.version && steps.current.outputs.version != ''
         env:
           GH_TOKEN: ${{ secrets.NIXPKGS_TOKEN }}
         run: |
