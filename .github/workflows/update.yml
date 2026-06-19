@@ -11,13 +11,13 @@ jobs:
     outputs:
       matrix: ${{ steps.filter.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+       - uses: actions/checkout@v7
 
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
+        uses: DeterminateSystems/nix-installer-action@v22
 
       - name: Clone nixpkgs
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: NixOS/nixpkgs
           ref: master
@@ -53,7 +53,7 @@ jobs:
 
     steps:
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
+        uses: DeterminateSystems/nix-installer-action@v22
 
       - name: Check latest upstream release
         id: release
@@ -75,7 +75,7 @@ jobs:
 
       - name: Clone nixpkgs
         if: matrix.package.currentVersion != steps.release.outputs.version
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: NixOS/nixpkgs
           ref: master
